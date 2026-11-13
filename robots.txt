@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://khan0431409.github.io/hookmedia-portfolio/sitemap.xml
