@@ -12,6 +12,9 @@
   // Default featured video (falls back to "save_water.mp4" if missing)
   const FEATURED_FILE = '25-before-25.mp4';
 
+  // Candidate relative folders searched in order (supports both flat root and assets/videos/)
+  const VIDEO_SEARCH_PREFIXES = ['', 'assets/videos/'];
+
   // Editable Hero Badges (4 items)
   const HERO_BADGES = [
     '5+ Years on Fiverr',
@@ -191,7 +194,7 @@
      STATE & HELPERS
      ========================================================================== */
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const VIDEO_BASE_PATH = ''; // Flat structure: all videos live in the same root folder as index.html
+  const resolvedVideoUrlMap = new Map();
   let activeFilter = 'all';
   let currentlyPlayingCardVideo = null;
   let lastFocusedElement = null;
@@ -259,7 +262,7 @@
     }, 2000);
   }
 
-  function checkVideoExists(fileName, timeoutMs) {
+  function probeSingleUrl(url, timeoutMs) {
     return new Promise(function (resolve) {
       const probe = document.createElement('video');
       probe.preload = 'metadata';
@@ -276,12 +279,13 @@
 
       const timer = window.setTimeout(function () {
         finish({ ok: false });
-      }, timeoutMs || 4000);
+      }, timeoutMs || 4500);
 
       probe.addEventListener('loadedmetadata', function () {
         window.clearTimeout(timer);
         finish({
           ok: true,
+          url: url,
           width: probe.videoWidth,
           height: probe.videoHeight,
           duration: probe.duration
@@ -293,8 +297,33 @@
         finish({ ok: false });
       });
 
-      probe.src = VIDEO_BASE_PATH + fileName + '#t=0.5';
+      probe.src = url + '#t=0.5';
     });
+  }
+
+  function checkVideoExists(fileName, timeoutMs) {
+    const normalized = String(fileName || '').trim();
+    if (!normalized) return Promise.resolve({ ok: false });
+
+    function tryPrefix(index) {
+      if (index >= VIDEO_SEARCH_PREFIXES.length) {
+        return Promise.resolve({ ok: false });
+      }
+      const candidateUrl = VIDEO_SEARCH_PREFIXES[index] + normalized;
+      return probeSingleUrl(candidateUrl, timeoutMs).then(function (res) {
+        if (res.ok) {
+          resolvedVideoUrlMap.set(normalized, candidateUrl);
+          return res;
+        }
+        return tryPrefix(index + 1);
+      });
+    }
+
+    return tryPrefix(0);
+  }
+
+  function getResolvedVideoUrl(fileName) {
+    return resolvedVideoUrlMap.get(fileName) || fileName;
   }
 
   /* ==========================================================================
@@ -380,9 +409,9 @@
       }
 
       const candidate = candidates[index];
-      checkVideoExists(candidate.file, 4000).then(function (res) {
+      checkVideoExists(candidate.file, 4500).then(function (res) {
         if (res.ok) {
-          heroVideo.src = VIDEO_BASE_PATH + candidate.file + '#t=0.5';
+          heroVideo.src = res.url + '#t=0.5';
           heroCaption.textContent = candidate.caption;
           heroCaption.hidden = false;
           if (!prefersReducedMotion) {
@@ -426,7 +455,7 @@
       }
 
       const file = filesToTry[index];
-      checkVideoExists(file, 4000).then(function (res) {
+      checkVideoExists(file, 4500).then(function (res) {
         if (!res.ok) {
           tryFeatured(index + 1);
           return;
@@ -456,7 +485,7 @@
           if (res.width && res.height) {
             videoEl.style.aspectRatio = res.width + ' / ' + res.height;
           }
-          videoEl.src = VIDEO_BASE_PATH + file + '#t=0.5';
+          videoEl.src = res.url + '#t=0.5';
         }
 
         if (chipsEl) {
@@ -580,7 +609,7 @@
     video.loop = true;
     video.playsInline = true;
     video.preload = 'metadata';
-    video.dataset.src = VIDEO_BASE_PATH + project.file + '#t=0.5';
+    video.dataset.file = project.file;
 
     const playOverlay = document.createElement('span');
     playOverlay.className = 'play-overlay';
@@ -634,39 +663,34 @@
     card.appendChild(stageBtn);
     card.appendChild(body);
 
-    let settled = false;
     function removeBrokenCard() {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeoutId);
       if (card.parentNode) {
         card.parentNode.removeChild(card);
         updateFilterCountsAndVisibility();
       }
     }
 
-    const timeoutId = window.setTimeout(function () {
-      if (!settled && video.readyState < 1) {
-        removeBrokenCard();
-      }
-    }, 4000);
+    function loadCardVideo() {
+      checkVideoExists(project.file, 4500).then(function (res) {
+        if (!res.ok) {
+          removeBrokenCard();
+          return;
+        }
+        video.src = res.url + '#t=0.5';
+        if (res.width && res.height) {
+          frame.style.aspectRatio = res.width + ' / ' + res.height;
+          project.realWidth = res.width;
+          project.realHeight = res.height;
+          project.aspect = computeAspectLabel(res.width, res.height) || project.aspect;
+        }
+        if (!project.duration && Number.isFinite(res.duration)) {
+          project.duration = formatDuration(res.duration);
+        }
+        specs.textContent = [project.aspect, project.duration].filter(Boolean).join(' • ');
+      });
+    }
 
-    video.addEventListener('loadedmetadata', function () {
-      settled = true;
-      window.clearTimeout(timeoutId);
-      if (video.videoWidth && video.videoHeight) {
-        frame.style.aspectRatio = video.videoWidth + ' / ' + video.videoHeight;
-        project.realWidth = video.videoWidth;
-        project.realHeight = video.videoHeight;
-        project.aspect = computeAspectLabel(video.videoWidth, video.videoHeight) || project.aspect;
-      }
-      if (!project.duration && Number.isFinite(video.duration)) {
-        project.duration = formatDuration(video.duration);
-      }
-      specs.textContent = [project.aspect, project.duration].filter(Boolean).join(' • ');
-    });
-
-    video.addEventListener('error', removeBrokenCard);
+    video.loadCardVideo = loadCardVideo;
 
     card.addEventListener('mouseenter', function () {
       if (prefersReducedMotion || !video.src) return;
@@ -696,7 +720,7 @@
     if (lazyObserver) {
       lazyObserver.observe(video);
     } else {
-      video.src = video.dataset.src;
+      loadCardVideo();
     }
 
     return card;
@@ -717,8 +741,8 @@
           entries.forEach(function (entry) {
             if (entry.isIntersecting) {
               const vid = entry.target;
-              if (vid.dataset.src && !vid.src) {
-                vid.src = vid.dataset.src;
+              if (typeof vid.loadCardVideo === 'function') {
+                vid.loadCardVideo();
               }
               observer.unobserve(vid);
             }
@@ -782,7 +806,7 @@
       videoEl.style.removeProperty('aspect-ratio');
     }
 
-    videoEl.src = VIDEO_BASE_PATH + project.file;
+    videoEl.src = getResolvedVideoUrl(project.file);
     lightbox.hidden = false;
     document.body.style.overflow = 'hidden';
 
