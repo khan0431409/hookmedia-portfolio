@@ -10,7 +10,7 @@
   const INSTAGRAM_URL = 'https://www.instagram.com/hookmedia.ai/';
 
   // Default featured video (falls back to "save_water.mp4" if missing)
-  const FEATURED_FILE = '25-before-25.mp4';
+  const FEATURED_FILE = 'save water.mp4';
 
   // Candidate relative folders searched in order (supports both flat root and assets/videos/)
   const VIDEO_SEARCH_PREFIXES = ['', 'assets/videos/'];
@@ -35,7 +35,7 @@
     {
       id: 'burger-ad',
       order: 1,
-      file: 'burger_ad.mp4',
+      file: 'burger ad.mp4',
       title: 'Burger Cheese-Pull Ad',
       description: 'A 15-second vertical ad built around a slow-motion cheese pull, ending on a pack shot.',
       category: 'concept',
@@ -47,7 +47,7 @@
     {
       id: 'hypercar-night-reveal',
       order: 2,
-      file: 'new_bugati_ad_videio_for_gig.mp4',
+      file: 'new bugati ad videio for gig.mp4',
       title: 'Hypercar Night Reveal',
       description: 'A cinematic 2K night reveal of a blue-and-black hypercar, with close-ups and rolling shots.',
       category: 'concept',
@@ -59,7 +59,7 @@
     {
       id: 'save-water',
       order: 3,
-      file: 'save_water.mp4',
+      file: 'save water.mp4',
       title: 'Water-Saving Shower Ad',
       description: 'A 21-second vertical product story with on-screen captions, from wasted shower water to a simple device that reuses it.',
       category: 'concept',
@@ -83,7 +83,7 @@
     {
       id: 'estate-suv-ad',
       order: 5,
-      file: 'car_ad.mp4',
+      file: 'car ad.mp4',
       title: 'Estate SUV Ad',
       description: 'A 15-second cinematic ad across an estate road, formal gardens and a stone staircase, ending on a hero shot.',
       category: 'concept',
@@ -107,7 +107,7 @@
     {
       id: 'sunset-cola-ad',
       order: 7,
-      file: 'coc_ad.mp4',
+      file: 'coc ad.mp4',
       title: 'Sunset Cola Ad',
       description: 'A warm sunset story on a football field with friends and an ice-cold bottle.',
       category: 'concept',
@@ -119,7 +119,7 @@
     {
       id: 'wireless-earbuds-ad',
       order: 8,
-      file: 'blutooth_ads.mp4',
+      file: 'blutooth ads.mp4',
       title: 'Wireless Earbuds Ad',
       description: 'A 15-second product ad with lifestyle shots, close-ups and a feature call-out for battery, touch control and water resistance.',
       category: 'concept',
@@ -149,7 +149,7 @@
       category: 'concept',
       aspect: '16:9',
       duration: '',
-      disclaimer: '',
+      disclaimer: 'Concept ad. Vehicles shown are AI-generated and not affiliated with any manufacturer.',
       featured: false
     }
   ];
@@ -172,7 +172,7 @@
       ],
       disclaimer: ''
     },
-    'save_water.mp4': {
+    'save water.mp4': {
       clientHeading: 'Featured Project: Water-Saving Shower Ad',
       conceptHeading: 'Featured Project',
       chips: ['21 seconds', '9:16', '1080 x 1920', 'Reels, TikTok & Shorts'],
@@ -194,7 +194,8 @@
      STATE & HELPERS
      ========================================================================== */
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const resolvedVideoUrlMap = new Map();
+  const videoResolveCache = new Map();
+  const posterResolveCache = new Map();
   let activeFilter = 'all';
   let currentlyPlayingCardVideo = null;
   let lastFocusedElement = null;
@@ -228,11 +229,16 @@
 
   function copyTextToClipboard(text) {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      return navigator.clipboard.writeText(text).catch(function () {
-        return fallbackCopyText(text);
-      });
+      return navigator.clipboard.writeText(text).then(
+        function () {
+          return true;
+        },
+        function () {
+          return Boolean(fallbackCopyText(text));
+        }
+      );
     }
-    return Promise.resolve(fallbackCopyText(text));
+    return Promise.resolve(Boolean(fallbackCopyText(text)));
   }
 
   function fallbackCopyText(text) {
@@ -244,86 +250,152 @@
       textarea.style.opacity = '0';
       document.body.appendChild(textarea);
       textarea.select();
-      document.execCommand('copy');
+      const ok = document.execCommand('copy');
       document.body.removeChild(textarea);
-      return true;
+      return Boolean(ok);
     } catch (err) {
       return false;
     }
   }
 
-  function showCopiedFeedback(buttonEl) {
+  function showCopiedFeedback(buttonEl, succeeded) {
     if (!buttonEl) return;
     const originalText = buttonEl.dataset.originalLabel || buttonEl.textContent;
     buttonEl.dataset.originalLabel = originalText;
-    buttonEl.textContent = 'Copied!';
-    window.setTimeout(function () {
-      buttonEl.textContent = originalText;
-    }, 2000);
-  }
 
-  function probeSingleUrl(url, timeoutMs) {
-    return new Promise(function (resolve) {
-      const probe = document.createElement('video');
-      probe.preload = 'metadata';
-      probe.muted = true;
-      let settled = false;
-
-      function finish(result) {
-        if (settled) return;
-        settled = true;
-        probe.removeAttribute('src');
-        probe.load();
-        resolve(result);
-      }
-
-      const timer = window.setTimeout(function () {
-        finish({ ok: false });
-      }, timeoutMs || 4500);
-
-      probe.addEventListener('loadedmetadata', function () {
-        window.clearTimeout(timer);
-        finish({
-          ok: true,
-          url: url,
-          width: probe.videoWidth,
-          height: probe.videoHeight,
-          duration: probe.duration
-        });
-      });
-
-      probe.addEventListener('error', function () {
-        window.clearTimeout(timer);
-        finish({ ok: false });
-      });
-
-      probe.src = url + '#t=0.5';
-    });
-  }
-
-  function checkVideoExists(fileName, timeoutMs) {
-    const normalized = String(fileName || '').trim();
-    if (!normalized) return Promise.resolve({ ok: false });
-
-    function tryPrefix(index) {
-      if (index >= VIDEO_SEARCH_PREFIXES.length) {
-        return Promise.resolve({ ok: false });
-      }
-      const candidateUrl = VIDEO_SEARCH_PREFIXES[index] + normalized;
-      return probeSingleUrl(candidateUrl, timeoutMs).then(function (res) {
-        if (res.ok) {
-          resolvedVideoUrlMap.set(normalized, candidateUrl);
-          return res;
-        }
-        return tryPrefix(index + 1);
-      });
+    if (buttonEl.dataset.feedbackTimer) {
+      window.clearTimeout(Number(buttonEl.dataset.feedbackTimer));
     }
 
-    return tryPrefix(0);
+    if (succeeded) {
+      buttonEl.textContent = 'Copied!';
+      buttonEl.dataset.feedbackTimer = String(
+        window.setTimeout(function () {
+          buttonEl.textContent = originalText;
+        }, 2000)
+      );
+    } else {
+      buttonEl.textContent = 'Copy failed. Select the text and press Ctrl+C';
+      buttonEl.dataset.feedbackTimer = String(
+        window.setTimeout(function () {
+          buttonEl.textContent = originalText;
+        }, 3000)
+      );
+    }
   }
 
-  function getResolvedVideoUrl(fileName) {
-    return resolvedVideoUrlMap.get(fileName) || fileName;
+  /* ==========================================================================
+     FIX 1 & FIX 9: FETCH-BASED FILE CHECK & CACHED RESOLUTION
+     ========================================================================== */
+  function fileExists(url) {
+    if (window.location && window.location.protocol === 'file:') {
+      return Promise.resolve(null);
+    }
+    if (typeof window.fetch !== 'function') {
+      return Promise.resolve(null);
+    }
+
+    return window
+      .fetch(url, { method: 'HEAD', cache: 'no-cache' })
+      .then(function (response) {
+        if (response.ok) return true;
+        if (response.status === 404 || response.status === 410) return false;
+
+        return window
+          .fetch(url, {
+            method: 'GET',
+            headers: { Range: 'bytes=0-0' },
+            cache: 'no-cache'
+          })
+          .then(function (getResponse) {
+            if (getResponse.ok || getResponse.status === 206) return true;
+            if (getResponse.status === 404 || getResponse.status === 410) return false;
+            return null;
+          })
+          .catch(function () {
+            return null;
+          });
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
+  function getCandidateVideoUrls(fileName) {
+    const variants = [fileName];
+    const underscoreVariant = fileName.replace(/\s+/g, '_');
+    const spaceVariant = fileName.replace(/_+/g, ' ');
+    if (variants.indexOf(underscoreVariant) === -1) variants.push(underscoreVariant);
+    if (variants.indexOf(spaceVariant) === -1) variants.push(spaceVariant);
+
+    const urls = [];
+    VIDEO_SEARCH_PREFIXES.forEach(function (prefix) {
+      variants.forEach(function (variant) {
+        const encoded = prefix + encodeURI(variant);
+        if (urls.indexOf(encoded) === -1) {
+          urls.push(encoded);
+        }
+      });
+    });
+    return urls;
+  }
+
+  function resolveVideo(fileName) {
+    const normalized = String(fileName || '').trim();
+    if (!normalized) return Promise.resolve(null);
+
+    if (videoResolveCache.has(normalized)) {
+      return videoResolveCache.get(normalized);
+    }
+
+    const candidateUrls = getCandidateVideoUrls(normalized);
+
+    const promise = (function () {
+      let sawUnknown = false;
+
+      function tryCandidate(index) {
+        if (index >= candidateUrls.length) {
+          if (sawUnknown) {
+            return Promise.resolve(candidateUrls[0]);
+          }
+          return Promise.resolve(null);
+        }
+
+        const candidateUrl = candidateUrls[index];
+        return fileExists(candidateUrl).then(function (exists) {
+          if (exists === true) {
+            return candidateUrl;
+          }
+          if (exists === null) {
+            sawUnknown = true;
+          }
+          return tryCandidate(index + 1);
+        });
+      }
+
+      return tryCandidate(0);
+    })();
+
+    videoResolveCache.set(normalized, promise);
+    return promise;
+  }
+
+  function resolvePosterForVideo(videoUrl) {
+    const posterUrl = String(videoUrl || '').replace(/\.mp4$/i, '.jpg');
+    if (!posterUrl || posterUrl === videoUrl) {
+      return Promise.resolve(null);
+    }
+
+    if (posterResolveCache.has(posterUrl)) {
+      return posterResolveCache.get(posterUrl);
+    }
+
+    const promise = fileExists(posterUrl).then(function (exists) {
+      return exists === true ? posterUrl : null;
+    });
+
+    posterResolveCache.set(posterUrl, promise);
+    return promise;
   }
 
   /* ==========================================================================
@@ -389,7 +461,7 @@
   }
 
   /* ==========================================================================
-     HERO VIDEO WITH FALLBACK
+     HERO VIDEO WITH FALLBACK (USES CACHED resolveVideo)
      ========================================================================== */
   function initHeroVideo() {
     const heroVideo = document.getElementById('hero-video');
@@ -397,8 +469,8 @@
     if (!heroVideo || !heroCaption) return;
 
     const candidates = [
-      { file: 'new_bugati_ad_videio_for_gig.mp4', caption: 'Concept ad, not affiliated with Bugatti' },
-      { file: 'car_ad.mp4', caption: 'Concept ad, not affiliated with Hyundai' }
+      { file: 'new bugati ad videio for gig.mp4', caption: 'Concept ad, not affiliated with Bugatti' },
+      { file: 'car ad.mp4', caption: 'Concept ad, not affiliated with Hyundai' }
     ];
 
     function tryHeroCandidate(index) {
@@ -409,19 +481,27 @@
       }
 
       const candidate = candidates[index];
-      checkVideoExists(candidate.file, 4500).then(function (res) {
-        if (res.ok) {
-          heroVideo.src = res.url + '#t=0.5';
-          heroCaption.textContent = candidate.caption;
-          heroCaption.hidden = false;
-          if (!prefersReducedMotion) {
-            const playPromise = heroVideo.play();
-            if (playPromise && typeof playPromise.catch === 'function') {
-              playPromise.catch(function () {});
-            }
-          }
-        } else {
+      resolveVideo(candidate.file).then(function (resolvedUrl) {
+        if (!resolvedUrl) {
           tryHeroCandidate(index + 1);
+          return;
+        }
+
+        function handleHeroError() {
+          heroVideo.removeEventListener('error', handleHeroError);
+          tryHeroCandidate(index + 1);
+        }
+
+        heroVideo.addEventListener('error', handleHeroError);
+        heroVideo.src = resolvedUrl + '#t=0.5';
+        heroCaption.textContent = candidate.caption;
+        heroCaption.hidden = false;
+
+        if (!prefersReducedMotion) {
+          const playPromise = heroVideo.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(function () {});
+          }
         }
       });
     }
@@ -430,7 +510,7 @@
   }
 
   /* ==========================================================================
-     FEATURED PROJECT WITH FALLBACK
+     FEATURED PROJECT WITH FALLBACK (FIX 6 & FIX 7)
      ========================================================================== */
   function hideFeaturedSection() {
     const section = document.getElementById('featured-work');
@@ -445,7 +525,7 @@
     const section = document.getElementById('featured-work');
     if (!section) return;
 
-    const fallbackFile = 'save_water.mp4';
+    const fallbackFile = 'save water.mp4';
     const filesToTry = FEATURED_FILE === fallbackFile ? [FEATURED_FILE] : [FEATURED_FILE, fallbackFile];
 
     function tryFeatured(index) {
@@ -455,8 +535,8 @@
       }
 
       const file = filesToTry[index];
-      checkVideoExists(file, 4500).then(function (res) {
-        if (!res.ok) {
+      resolveVideo(file).then(function (resolvedUrl) {
+        if (!resolvedUrl) {
           tryFeatured(index + 1);
           return;
         }
@@ -482,10 +562,24 @@
         }
 
         if (videoEl) {
-          if (res.width && res.height) {
-            videoEl.style.aspectRatio = res.width + ' / ' + res.height;
-          }
-          videoEl.src = res.url + '#t=0.5';
+          videoEl.addEventListener('loadedmetadata', function () {
+            if (videoEl.videoWidth && videoEl.videoHeight) {
+              videoEl.style.aspectRatio = videoEl.videoWidth + ' / ' + videoEl.videoHeight;
+            }
+          });
+
+          // Fix 6: start from beginning (0s) on first play despite #t=0.5 thumbnail fragment
+          videoEl.addEventListener(
+            'play',
+            function () {
+              if (videoEl.currentTime > 0 && videoEl.currentTime < 1) {
+                videoEl.currentTime = 0;
+              }
+            },
+            { once: true }
+          );
+
+          videoEl.src = resolvedUrl + '#t=0.5';
         }
 
         if (chipsEl) {
@@ -514,6 +608,13 @@
           disclaimerEl.textContent = copy.disclaimer;
           disclaimerEl.hidden = false;
         }
+
+        // Fix 7: reveal featured section and nav links only after content is populated
+        section.hidden = false;
+        const navItem = document.getElementById('nav-featured-item');
+        const footerItem = document.getElementById('footer-featured-item');
+        if (navItem) navItem.hidden = false;
+        if (footerItem) footerItem.hidden = false;
       });
     }
 
@@ -521,7 +622,7 @@
   }
 
   /* ==========================================================================
-     WORK GRID, FILTERS & SINGLE-VIDEO PREVIEW
+     WORK GRID, FILTERS & SINGLE-VIDEO PREVIEW (FIX 1 & FIX 9)
      ========================================================================== */
   function pauseActiveCardPreview(exceptVideo) {
     if (currentlyPlayingCardVideo && currentlyPlayingCardVideo !== exceptVideo) {
@@ -583,7 +684,7 @@
     });
   }
 
-  function createProjectCard(project, lazyObserver) {
+  function createProjectCard(project, resolvedUrl, lazyObserver) {
     const category = getCategory(project.file);
     const badgeLabel = getBadgeLabel(project.file);
 
@@ -609,7 +710,7 @@
     video.loop = true;
     video.playsInline = true;
     video.preload = 'metadata';
-    video.dataset.file = project.file;
+    video.dataset.resolvedUrl = resolvedUrl;
 
     const playOverlay = document.createElement('span');
     playOverlay.className = 'play-overlay';
@@ -649,9 +750,16 @@
     desc.className = 'card-desc';
     desc.textContent = project.description;
 
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'card-retry-btn';
+    retryBtn.textContent = 'Video unavailable. Tap to retry.';
+    retryBtn.hidden = true;
+
     body.appendChild(metaRow);
     body.appendChild(titleBtn);
     body.appendChild(desc);
+    body.appendChild(retryBtn);
 
     if (project.disclaimer) {
       const disclaimer = document.createElement('p');
@@ -663,37 +771,52 @@
     card.appendChild(stageBtn);
     card.appendChild(body);
 
-    function removeBrokenCard() {
-      if (card.parentNode) {
-        card.parentNode.removeChild(card);
-        updateFilterCountsAndVisibility();
+    video.addEventListener('loadedmetadata', function () {
+      retryBtn.hidden = true;
+      if (video.videoWidth && video.videoHeight) {
+        frame.style.aspectRatio = video.videoWidth + ' / ' + video.videoHeight;
+        project.realWidth = video.videoWidth;
+        project.realHeight = video.videoHeight;
+        project.aspect = computeAspectLabel(video.videoWidth, video.videoHeight) || project.aspect;
       }
+      if (!project.duration && Number.isFinite(video.duration)) {
+        project.duration = formatDuration(video.duration);
+      }
+      specs.textContent = [project.aspect, project.duration].filter(Boolean).join(' • ');
+    });
+
+    // Fix 1: Never remove a card on a later video error; show inline retry prompt instead
+    video.addEventListener('error', function () {
+      retryBtn.hidden = false;
+    });
+
+    function retryVideoLoad() {
+      retryBtn.hidden = true;
+      video.src = resolvedUrl + '#t=0.5';
+      video.load();
     }
 
-    function loadCardVideo() {
-      checkVideoExists(project.file, 4500).then(function (res) {
-        if (!res.ok) {
-          removeBrokenCard();
-          return;
+    retryBtn.addEventListener('click', retryVideoLoad);
+
+    function loadCardMedia() {
+      resolvePosterForVideo(resolvedUrl).then(function (posterUrl) {
+        if (posterUrl) {
+          video.poster = posterUrl;
+          video.preload = 'none';
+        } else {
+          video.preload = 'metadata';
+          video.src = resolvedUrl + '#t=0.5';
         }
-        video.src = res.url + '#t=0.5';
-        if (res.width && res.height) {
-          frame.style.aspectRatio = res.width + ' / ' + res.height;
-          project.realWidth = res.width;
-          project.realHeight = res.height;
-          project.aspect = computeAspectLabel(res.width, res.height) || project.aspect;
-        }
-        if (!project.duration && Number.isFinite(res.duration)) {
-          project.duration = formatDuration(res.duration);
-        }
-        specs.textContent = [project.aspect, project.duration].filter(Boolean).join(' • ');
       });
     }
 
-    video.loadCardVideo = loadCardVideo;
+    video.loadCardMedia = loadCardMedia;
 
     card.addEventListener('mouseenter', function () {
-      if (prefersReducedMotion || !video.src) return;
+      if (prefersReducedMotion) return;
+      if (!video.src) {
+        video.src = resolvedUrl;
+      }
       pauseActiveCardPreview(video);
       currentlyPlayingCardVideo = video;
       const p = video.play();
@@ -711,7 +834,7 @@
 
     function handleOpenLightbox() {
       pauseActiveCardPreview(null);
-      openLightbox(project, stageBtn);
+      openLightbox(project, resolvedUrl, stageBtn);
     }
 
     stageBtn.addEventListener('click', handleOpenLightbox);
@@ -720,10 +843,21 @@
     if (lazyObserver) {
       lazyObserver.observe(video);
     } else {
-      loadCardVideo();
+      loadCardMedia();
     }
 
     return card;
+  }
+
+  function renderEmptyWorkNotice(grid) {
+    const notice = document.createElement('p');
+    notice.className = 'work-notice';
+    notice.innerHTML =
+      'My video gallery is loading or unavailable right now. See my latest ads on ' +
+      '<a href="' + INSTAGRAM_URL + '" target="_blank" rel="noopener noreferrer">Instagram (@hookmedia.ai)</a>' +
+      ' or on ' +
+      '<a href="' + FIVERR_URL + '" target="_blank" rel="noopener noreferrer">Fiverr</a>.';
+    grid.appendChild(notice);
   }
 
   function initWorkGrid() {
@@ -734,30 +868,48 @@
       return a.order - b.order;
     });
 
-    let lazyObserver = null;
-    if ('IntersectionObserver' in window) {
-      lazyObserver = new IntersectionObserver(
-        function (entries, observer) {
-          entries.forEach(function (entry) {
-            if (entry.isIntersecting) {
-              const vid = entry.target;
-              if (typeof vid.loadCardVideo === 'function') {
-                vid.loadCardVideo();
+    Promise.all(
+      sortedProjects.map(function (project) {
+        return resolveVideo(project.file).then(function (resolvedUrl) {
+          return { project: project, resolvedUrl: resolvedUrl };
+        });
+      })
+    ).then(function (results) {
+      const availableItems = results.filter(function (item) {
+        return item.resolvedUrl !== null;
+      });
+
+      if (availableItems.length === 0) {
+        updateFilterCountsAndVisibility();
+        renderEmptyWorkNotice(grid);
+        return;
+      }
+
+      let lazyObserver = null;
+      if ('IntersectionObserver' in window) {
+        lazyObserver = new IntersectionObserver(
+          function (entries, observer) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) {
+                const vid = entry.target;
+                if (typeof vid.loadCardMedia === 'function') {
+                  vid.loadCardMedia();
+                }
+                observer.unobserve(vid);
               }
-              observer.unobserve(vid);
-            }
-          });
-        },
-        { rootMargin: '250px 0px' }
-      );
-    }
+            });
+          },
+          { rootMargin: '250px 0px' }
+        );
+      }
 
-    sortedProjects.forEach(function (project) {
-      const card = createProjectCard(project, lazyObserver);
-      grid.appendChild(card);
+      availableItems.forEach(function (item) {
+        const card = createProjectCard(item.project, item.resolvedUrl, lazyObserver);
+        grid.appendChild(card);
+      });
+
+      updateFilterCountsAndVisibility();
     });
-
-    updateFilterCountsAndVisibility();
 
     document.querySelectorAll('.filter-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -769,7 +921,7 @@
   /* ==========================================================================
      ACCESSIBLE LIGHTBOX PLAYER
      ========================================================================== */
-  function openLightbox(project, triggerEl) {
+  function openLightbox(project, resolvedUrl, triggerEl) {
     const lightbox = document.getElementById('video-lightbox');
     const videoEl = document.getElementById('lightbox-video');
     const badgeEl = document.getElementById('lightbox-badge');
@@ -806,7 +958,7 @@
       videoEl.style.removeProperty('aspect-ratio');
     }
 
-    videoEl.src = getResolvedVideoUrl(project.file);
+    videoEl.src = resolvedUrl;
     lightbox.hidden = false;
     document.body.style.overflow = 'hidden';
 
@@ -877,15 +1029,66 @@
   }
 
   /* ==========================================================================
-     CONTACT FORM & FALLBACK SEND PANEL
+     CONTACT FORM & FALLBACK SEND PANEL (FIX 5)
      ========================================================================== */
+  function buildMessageLines(nameVal, emailVal, typeVal, briefText) {
+    return [
+      'Hi Muhammad,',
+      '',
+      'Name/Brand: ' + nameVal,
+      'Email: ' + emailVal,
+      'Project type: ' + typeVal,
+      'Brief and goal:',
+      briefText,
+      '',
+      'Sent from the HookMedia.ai portfolio site (' + SITE_URL + ')'
+    ];
+  }
+
+  function buildSafeEmailPayload(subject, nameVal, emailVal, typeVal, briefVal) {
+    const maxEncodedLength = 1750;
+    const notice = ' [shortened: use Copy the full message for the full text]';
+
+    const fullLines = buildMessageLines(nameVal, emailVal, typeVal, briefVal);
+    const fullRawBody = fullLines.join('\n');
+
+    if (encodeURIComponent(subject + fullRawBody).length <= maxEncodedLength) {
+      return {
+        fullRawBody: fullRawBody,
+        safeRawBody: fullRawBody
+      };
+    }
+
+    let low = 0;
+    let high = briefVal.length;
+    let bestBrief = '';
+
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const candidateBrief = briefVal.slice(0, mid) + notice;
+      const candidateBody = buildMessageLines(nameVal, emailVal, typeVal, candidateBrief).join('\n');
+      if (encodeURIComponent(subject + candidateBody).length <= maxEncodedLength) {
+        bestBrief = candidateBrief;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    const safeRawBody = buildMessageLines(nameVal, emailVal, typeVal, bestBrief || notice).join('\n');
+    return {
+      fullRawBody: fullRawBody,
+      safeRawBody: safeRawBody
+    };
+  }
+
   function initContactForm() {
     const form = document.getElementById('enquiry-form');
     const channelCopyBtn = document.getElementById('channel-copy-email');
     if (channelCopyBtn) {
       channelCopyBtn.addEventListener('click', function () {
-        copyTextToClipboard(EMAIL_ADDRESS).then(function () {
-          showCopiedFeedback(channelCopyBtn);
+        copyTextToClipboard(EMAIL_ADDRESS).then(function (ok) {
+          showCopiedFeedback(channelCopyBtn, ok);
         });
       });
     }
@@ -908,6 +1111,7 @@
     const btnOutlook = document.getElementById('btn-send-outlook');
     const btnCopyMsg = document.getElementById('btn-copy-message');
     const btnCopyAddr = document.getElementById('btn-copy-address');
+    const sendPreview = document.getElementById('send-preview');
 
     let latestFormattedMessage = '';
 
@@ -959,33 +1163,20 @@
       }
 
       const subject = 'New AI Video Ad enquiry: ' + typeVal + ' from ' + nameVal;
-      const bodyLines = [
-        'Hi Muhammad,',
-        '',
-        'Name/Brand: ' + nameVal,
-        'Email: ' + emailVal,
-        'Project type: ' + typeVal,
-        'Brief and goal:',
-        briefVal,
-        '',
-        'Sent from the HookMedia.ai portfolio site (' + SITE_URL + ')'
-      ];
+      const payload = buildSafeEmailPayload(subject, nameVal, emailVal, typeVal, briefVal);
 
-      latestFormattedMessage = 'Subject: ' + subject + '\n\n' + bodyLines.join('\n');
+      latestFormattedMessage = 'Subject: ' + subject + '\n\n' + payload.fullRawBody;
 
       const encodedSubject = encodeURIComponent(subject);
-      let encodedBody = bodyLines.map(encodeURIComponent).join('%0D%0A');
-      if (encodedSubject.length + encodedBody.length > 1750) {
-        encodedBody = encodedBody.slice(0, 1750 - encodedSubject.length);
-      }
+      const encodedSafeBody = encodeURIComponent(payload.safeRawBody);
 
       const mailtoHref =
         'mailto:' +
-        encodeURIComponent(EMAIL_ADDRESS) +
+        EMAIL_ADDRESS +
         '?subject=' +
         encodedSubject +
         '&body=' +
-        encodedBody;
+        encodedSafeBody;
 
       const gmailHref =
         'https://mail.google.com/mail/?view=cm&fs=1&to=' +
@@ -993,7 +1184,7 @@
         '&su=' +
         encodedSubject +
         '&body=' +
-        encodedBody;
+        encodedSafeBody;
 
       const outlookHref =
         'https://outlook.live.com/mail/0/deeplink/compose?to=' +
@@ -1001,10 +1192,11 @@
         '&subject=' +
         encodedSubject +
         '&body=' +
-        encodedBody;
+        encodedSafeBody;
 
       if (btnGmail) btnGmail.href = gmailHref;
       if (btnOutlook) btnOutlook.href = outlookHref;
+      if (sendPreview) sendPreview.value = latestFormattedMessage;
 
       const tempMailLink = document.createElement('a');
       tempMailLink.href = mailtoHref;
@@ -1023,30 +1215,34 @@
 
     if (btnCopyMsg) {
       btnCopyMsg.addEventListener('click', function () {
-        copyTextToClipboard(latestFormattedMessage).then(function () {
-          showCopiedFeedback(btnCopyMsg);
+        copyTextToClipboard(latestFormattedMessage).then(function (ok) {
+          showCopiedFeedback(btnCopyMsg, ok);
         });
       });
     }
 
     if (btnCopyAddr) {
       btnCopyAddr.addEventListener('click', function () {
-        copyTextToClipboard(EMAIL_ADDRESS).then(function () {
-          showCopiedFeedback(btnCopyAddr);
+        copyTextToClipboard(EMAIL_ADDRESS).then(function (ok) {
+          showCopiedFeedback(btnCopyAddr, ok);
         });
       });
     }
   }
 
   /* ==========================================================================
-     SCROLL REVEAL
+     SCROLL REVEAL WITH 3-SECOND FAILSAFE (FIX 2)
      ========================================================================== */
+  function revealAllSections() {
+    document.querySelectorAll('.reveal').forEach(function (sec) {
+      sec.classList.add('is-visible');
+    });
+  }
+
   function initScrollReveal() {
     const sections = document.querySelectorAll('.reveal');
     if (prefersReducedMotion || !('IntersectionObserver' in window)) {
-      sections.forEach(function (sec) {
-        sec.classList.add('is-visible');
-      });
+      revealAllSections();
       return;
     }
 
@@ -1065,6 +1261,9 @@
     sections.forEach(function (sec) {
       observer.observe(sec);
     });
+
+    // Failsafe: ensure all reveal sections become visible 3s after DOMContentLoaded
+    window.setTimeout(revealAllSections, 3000);
   }
 
   document.addEventListener('DOMContentLoaded', function () {
